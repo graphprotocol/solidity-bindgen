@@ -1,0 +1,13 @@
+[package]
+name = "solidity-bindgen"
+version = "0.1.0"
+authors = ["Zac Burns <That3Percent@gmail.com>"]
+edition = "2018"
+
+
+[dependencies]
+solidity-bindgen-macros = { path = "../solidity-bindgen-macros" }
+web3 = "0.10.0"
+anyhow = "1.0.28"
+futures = { version="0.3.4", features=["compat"] }
+ethabi = "9.0"
