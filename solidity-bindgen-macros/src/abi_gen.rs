@@ -25,12 +25,12 @@ pub fn abi_from_file(path: impl AsRef<Path>, span: Span) -> TokenStream {
         }
 
         impl #struct_name {
-            pub async fn new(address: ::web3::types::Address, url: &str) -> ::solidity_bindgen::internal::Result<Self> {
+            pub fn new(address: ::web3::types::Address, url: &str, event_loop_handle: ::std::sync::Arc<::web3::transports::EventLoopHandle>) -> ::solidity_bindgen::internal::Result<Self> {
                 // Embed ABI into the program
                 let abi = #abi_str;
 
                 // Set up a wrapper so we can make calls
-                let contract = ::solidity_bindgen::internal::ContractWrapper::new(address, abi.as_bytes(), url).await?;
+                let contract = ::solidity_bindgen::internal::ContractWrapper::new(address, abi.as_bytes(), url, event_loop_handle)?;
                 Ok(Self {
                     contract
                 })
@@ -62,7 +62,6 @@ pub fn to_rust_name(eth_name: &str, i: usize) -> String {
     } else {
         to_snake_case(eth_name)
     }
-
 }
 
 pub fn fn_from_abi(abi: &Abi, span: Span) -> TokenStream {

@@ -1,6 +1,7 @@
 pub use anyhow::{anyhow, Result};
 use ethabi::Token;
 use futures::compat::Future01CompatExt as _;
+use std::sync::Arc;
 use web3::contract::tokens::{Detokenize, Tokenizable, Tokenize};
 use web3::contract::{Contract, Error};
 use web3::transports::{EventLoopHandle, Http};
@@ -36,11 +37,10 @@ impl Detokenize for Empty {
 }
 
 pub struct ContractWrapper {
-    // Keeping a reference to this because if we drop it then interaction with Ethereum ceases.
-    //
-    // We could get really fancy and use a MaybeOwned here, or maybe just an Arc
-    // to manage EventLoopHandles for multiple contracts, but it's not likely worth the effort
-    _event_loop_handle: EventLoopHandle,
+    // Keeping a reference to this because if we drop it then interaction with
+    // Ethereum ceases. This goes in an Arc because if we create too many of
+    // these my macbook says there are too many open files.
+    _event_loop_handle: Arc<EventLoopHandle>,
     contract: Contract<Http>,
 }
 
@@ -67,18 +67,27 @@ impl ContractWrapper {
         todo!()
     }
 
-    pub async fn new(address: Address, json_abi: &[u8], url: &str) -> Result<Self> {
+    pub fn new(
+        address: Address,
+        json_abi: &[u8],
+        url: &str,
+        event_loop_handle: Arc<EventLoopHandle>,
+    ) -> Result<Self> {
         // We are not expecting to interact with the chain frequently,
         // and the websocket transport has problems with ping.
         // So, the Http transport seems like the best choice.
-        let (_event_loop_handle, http) = Http::new(&url)?;
-        let web3 = Web3::new(http);
+        let handle = event_loop_handle
+            .remote()
+            .handle()
+            .expect("Handle for event loop should be alive");
+        let transport = Http::with_event_loop(&url, &handle, 64)?;
+        let web3 = Web3::new(transport);
 
         let contract =
             Contract::from_json(web3.eth(), address, json_abi).map_err(|e| anyhow!("{}", e))?;
 
         Ok(Self {
-            _event_loop_handle,
+            _event_loop_handle: event_loop_handle,
             contract,
         })
     }
