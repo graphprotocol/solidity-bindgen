@@ -1,4 +1,5 @@
 use crate::abi_json::{abi_from_json, Abi};
+use ethabi::param_type::{ParamType, Reader};
 use inflector::cases::snakecase::to_snake_case;
 use proc_macro2::{Ident, Span, TokenStream};
 use std::path::Path;
@@ -41,19 +42,53 @@ pub fn abi_from_file(path: impl AsRef<Path>, span: Span) -> TokenStream {
     }
 }
 
+fn param_token_type(param_type: ParamType) -> TokenStream {
+    match param_type {
+        ParamType::Address => quote! { ::web3::types::Address },
+        ParamType::Bytes => quote! { ::std::vec::Vec<u8> },
+        ParamType::Int(size) => match size {
+            256 => quote! { ::solidity_bindgen::internal::Unimplemented },
+            _ => {
+                let name = Ident::new(&format!("i{}", size), Span::call_site());
+                quote! { #name }
+            }
+        },
+        ParamType::Uint(size) => match size {
+            256 => quote! { ::web3::types::U256 },
+            _ => {
+                let name = Ident::new(&format!("u{}", size), Span::call_site());
+                quote! { #name }
+            }
+        },
+        ParamType::Bool => quote! { bool },
+        ParamType::String => quote! { ::std::string::String },
+        ParamType::Array(inner) => {
+            let inner = param_token_type(*inner);
+            quote! { ::std::vec::Vec<#inner> }
+        }
+        ParamType::FixedBytes(len) => quote! { [ u8; #len ] },
+        ParamType::FixedArray(inner, len) => {
+            let inner = param_token_type(*inner);
+            quote! { [#inner; #len] }
+        }
+        ParamType::Tuple(members) => {
+            match members.len() {
+                0 => {
+                    // TODO: Verify that this detokenizes the same
+                    quote! { ::solidity_bindgen::internal::Empty }
+                }
+                _ => {
+                    let members = members.into_iter().map(|member| param_token_type(*member));
+                    quote! { (#(#members,)*) }
+                }
+            }
+        }
+    }
+}
+
 /// Convert some Ethereum ABI type to a Rust type (usually from the web3 namespace)
 fn param_type(type_name: &str) -> TokenStream {
-    match type_name {
-        "uint" => param_type("uint256"),
-        "int" => param_type("int256"),
-        "uint256" => quote! { ::web3::types::U256 },
-        "uint128" => quote! { ::web3::types::U128 },
-        "uint64" => quote! { ::web3::types::U64 },
-        "address" => quote! { ::web3::types::Address },
-        // Using the unimplemented type here makes it clear at least that a call exists,
-        // even if it's un-callable as of yet due to not being supported (yet)
-        _ => quote! { ::solidity_bindgen::internal::Unimplemented },
-    }
+    param_token_type(Reader::read(type_name).unwrap())
 }
 
 pub fn to_rust_name(eth_name: &str, i: usize) -> String {

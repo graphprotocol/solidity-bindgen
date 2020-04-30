@@ -12,6 +12,7 @@ maintenance = { status = "experimental" }
 proc-macro = true
 
 [dependencies]
+ethabi = "12.0.0"
 syn = "1.0.18"
 quote = "1.0.3"
 proc-macro2 = "1.0.10"
