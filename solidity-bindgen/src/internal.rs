@@ -15,8 +15,9 @@ impl Tokenizable for Unimplemented {
     where
         Self: Sized,
     {
-        unsafe { std::hint::unreachable_unchecked() }
+        unimplemented!()
     }
+    #[inline(always)]
     fn into_token(self) -> Token {
         unsafe { std::hint::unreachable_unchecked() }
     }
