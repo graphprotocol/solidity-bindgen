@@ -3,4 +3,4 @@
 pub mod internal;
 
 // Re-export the macros
-pub use solidity_bindgen_macros::contract_abi;
+pub use solidity_bindgen_macros::*;

@@ -13,18 +13,20 @@ pub fn abi_from_file(path: impl AsRef<Path>, span: Span) -> TokenStream {
         .unwrap()
         .to_owned();
     let bytes = std::fs::read(path).unwrap();
-    let abis = abi_from_json(&bytes);
+    let fn_abis = abi_from_json(&bytes);
     let abi_str = String::from_utf8(bytes).unwrap();
 
     let struct_name = Ident::new(name.as_str(), span);
 
-    let fns = abis.iter().map(|abi| fn_from_abi(abi, span));
+    let fns = fn_abis.iter().map(|abi| fn_from_abi(abi, span));
 
     quote! {
+        #[allow(dead_code)]
         pub struct #struct_name {
             contract: ::solidity_bindgen::internal::ContractWrapper,
         }
 
+        #[allow(dead_code, unused_parens)]
         impl #struct_name {
             pub fn new(address: ::web3::types::Address, url: &str, event_loop_handle: ::std::sync::Arc<::web3::transports::EventLoopHandle>) -> ::solidity_bindgen::internal::Result<Self> {
                 // Embed ABI into the program
@@ -71,18 +73,15 @@ fn param_token_type(param_type: ParamType) -> TokenStream {
             let inner = param_token_type(*inner);
             quote! { [#inner; #len] }
         }
-        ParamType::Tuple(members) => {
-            match members.len() {
-                0 => {
-                    // TODO: Verify that this detokenizes the same
-                    quote! { ::solidity_bindgen::internal::Empty }
-                }
-                _ => {
-                    let members = members.into_iter().map(|member| param_token_type(*member));
-                    quote! { (#(#members,)*) }
-                }
+        ParamType::Tuple(members) => match members.len() {
+            0 => {
+                quote! { ::solidity_bindgen::internal::Empty }
             }
-        }
+            _ => {
+                let members = members.into_iter().map(|member| param_token_type(*member));
+                quote! { (#(#members,)*) }
+            }
+        },
     }
 }
 
@@ -91,9 +90,9 @@ fn param_type(type_name: &str) -> TokenStream {
     param_token_type(Reader::read(type_name).unwrap())
 }
 
-pub fn to_rust_name(eth_name: &str, i: usize) -> String {
+pub fn to_rust_name(type_name: &str, eth_name: &str, i: usize) -> String {
     if eth_name == "" {
-        format!("no_name_provided_{}", i)
+        format!("{}_{}", type_name, i)
     } else {
         to_snake_case(eth_name)
     }
@@ -103,11 +102,11 @@ pub fn fn_from_abi(abi: &Abi, span: Span) -> TokenStream {
     match abi {
         Abi::Function(function) => {
             let eth_name = &function.name;
-            let rust_name = Ident::new(&to_rust_name(eth_name, 0), span);
+            let rust_name = Ident::new(&to_rust_name("function", eth_name, 0), span);
 
             // Get the types and names of parameters
             let params = function.inputs.iter().enumerate().map(|(i, param)| {
-                let name = Ident::new(&to_rust_name(&param.name, i), span);
+                let name = Ident::new(&to_rust_name("input", &param.name, i), span);
                 let t = param_type(&param.r#type);
                 quote! {
                     #name: #t
@@ -116,7 +115,7 @@ pub fn fn_from_abi(abi: &Abi, span: Span) -> TokenStream {
 
             let body = {
                 let params = function.inputs.iter().enumerate().map(|(i, param)| {
-                    let name = Ident::new(&to_rust_name(&param.name, i), span);
+                    let name = Ident::new(&to_rust_name("input", &param.name, i), span);
                     quote! { #name }
                 });
                 if function.constant.unwrap_or_default() {
