@@ -1,0 +1,21 @@
+[package]
+name = "solidity-bindgen-macros"
+version = "0.1.0"
+authors = ["Zac Burns <That3Percent@gmail.com>"]
+edition = "2018"
+license = "MIT"
+
+[badges]
+maintenance = { status = "experimental" }
+
+[lib]
+proc-macro = true
+
+[dependencies]
+ethabi = "12.0.0"
+syn = "1.0.18"
+quote = "1.0.3"
+proc-macro2 = "1.0.10"
+Inflector = "0.11.4"
+serde = { version = "1.0.106", features = ["derive"] }
+serde_json = "1.0.51"
