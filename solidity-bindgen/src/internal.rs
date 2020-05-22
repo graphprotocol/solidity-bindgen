@@ -1,17 +1,16 @@
-pub use anyhow::{anyhow, Result};
+use super::Context;
 use ethabi::Token;
 use futures::compat::Future01CompatExt as _;
-use std::sync::Arc;
 use web3::contract::tokens::{Detokenize, Tokenizable, Tokenize};
-use web3::contract::{Contract, Error};
-use web3::transports::{EventLoopHandle, Http};
-use web3::types::Address;
+use web3::contract::{self, Contract};
+use web3::transports::Http;
+use web3::types::{Address, TransactionReceipt};
 use web3::Web3;
 
 pub enum Unimplemented {}
 
 impl Tokenizable for Unimplemented {
-    fn from_token(_: Token) -> Result<Self, Error>
+    fn from_token(_: Token) -> Result<Self, contract::Error>
     where
         Self: Sized,
     {
@@ -25,71 +24,108 @@ impl Tokenizable for Unimplemented {
 
 pub struct Empty;
 impl Detokenize for Empty {
-    fn from_tokens(tokens: Vec<Token>) -> std::result::Result<Self, Error>
+    fn from_tokens(tokens: Vec<Token>) -> std::result::Result<Self, contract::Error>
     where
         Self: Sized,
     {
         if tokens.is_empty() {
             Ok(Empty)
         } else {
-            Err(Error::InvalidOutputType("Expected no tokens".to_owned()))
+            Err(contract::Error::InvalidOutputType(
+                "Expected no tokens".to_owned(),
+            ))
         }
     }
 }
 
+/// Mostly exists to map to the new futures.
+/// This is the "untyped" API which the generated types will use
 pub struct ContractWrapper {
-    // Keeping a reference to this because if we drop it then interaction with
-    // Ethereum ceases. This goes in an Arc because if we create too many of
-    // these my macbook says there are too many open files.
-    _event_loop_handle: Arc<EventLoopHandle>,
     contract: Contract<Http>,
+    context: Context,
 }
 
 impl ContractWrapper {
-    /// Mostly exists to map to the new futures.
-    /// This is the "untyped" API which the generated types will use
-    pub async fn query<T: Detokenize>(
+    pub async fn call<T: Detokenize>(
         &self,
         name: &'static str,
         params: impl Tokenize,
-    ) -> Result<T> {
-        self.contract
-            .query(name, params, None, Default::default(), None)
+    ) -> Result<T, web3::Error> {
+        match self
+            .contract
+            .query(
+                name,
+                params,
+                Some(self.context.from()),
+                Default::default(),
+                None,
+            )
             .compat()
             .await
-            .map_err(|e| anyhow!("{}", e))
+        {
+            Ok(v) => Ok(v),
+            Err(e) => match e {
+                web3::contract::Error::Api(e) => Err(e),
+                // The other variants InvalidOutputType and Abi should be
+                // prevented by the code gen. It is useful to convert the error
+                // type to be restricted to the web3::Error type for a few
+                // reasons. First, the web3::Error type (unlike the
+                // web3::contract::Error type) implements Send. This makes it
+                // usable in async methods. Also for consistency it's easier to
+                // mix methods using both call and send to use the ? operator if
+                // they have the same error type. It is the opinion of this
+                // library that ABI sorts of errors are irrecoverable and should
+                // panic anyway.
+                _ => panic!("The ABI is out of date"),
+            },
+        }
     }
 
-    pub async fn non_pure_todo<T: Detokenize>(
+    pub async fn send(
         &self,
-        _name: &'static str,
-        _params: impl Tokenize,
-    ) -> Result<T> {
-        todo!()
+        name: &'static str,
+        params: impl Tokenize,
+    ) -> Result<TransactionReceipt, web3::Error> {
+        self.contract
+            .call_with_confirmations(
+                name,
+                params,
+                self.context.from(),
+                Default::default(),
+                // Num confirmations. From a library standpoint, this should be
+                // a parameter of the function. Choosing a correct value is very
+                // difficult, even for a consumer of the library as it would
+                // require assessing the value of the transaction, security
+                // margins, and a number of other factors for which data may not
+                // be available. So just picking a pretty high security margin
+                // for now.
+                24,
+            )
+            .compat()
+            .await
     }
 
     pub fn new(
-        address: Address,
+        contract_address: Address,
+        context: &Context,
         json_abi: &[u8],
-        url: &str,
-        event_loop_handle: Arc<EventLoopHandle>,
-    ) -> Result<Self> {
+    ) -> Result<Self, web3::error::Error> {
+        let context = context.clone();
         // We are not expecting to interact with the chain frequently,
         // and the websocket transport has problems with ping.
         // So, the Http transport seems like the best choice.
-        let handle = event_loop_handle
+        let handle = context
+            .handle()
             .remote()
             .handle()
             .expect("Handle for event loop should be alive");
-        let transport = Http::with_event_loop(&url, &handle, 64)?;
+        let transport = Http::with_event_loop(context.url(), &handle, 64)?;
         let web3 = Web3::new(transport);
 
-        let contract =
-            Contract::from_json(web3.eth(), address, json_abi).map_err(|e| anyhow!("{}", e))?;
+        // All of the ABIs are verified at compile time, so we can just unwrap here.
+        // See also 4cd1038f-56f2-4cf2-8dbe-672da9006083
+        let contract = Contract::from_json(web3.eth(), contract_address, json_abi).unwrap();
 
-        Ok(Self {
-            _event_loop_handle: event_loop_handle,
-            contract,
-        })
+        Ok(Self { context, contract })
     }
 }
