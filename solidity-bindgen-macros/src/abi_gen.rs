@@ -1,4 +1,4 @@
-use crate::abi_json::{abi_from_json, Abi};
+use crate::abi_json::{abi_from_json, Abi, StateMutability};
 use ethabi::param_type::{ParamType, Reader};
 use inflector::cases::snakecase::to_snake_case;
 use proc_macro2::{Ident, Span, TokenStream};
@@ -124,8 +124,10 @@ pub fn fn_from_abi(abi: &Abi, span: Span) -> TokenStream {
                 quote! { (#(#params),*) }
             };
 
-            let transaction = function.constant.unwrap_or_default();
-
+            let transaction = matches!(
+                function.state_mutability,
+                StateMutability::Nonpayable | StateMutability::Payable
+            );
             let method = if transaction { "send" } else { "call" };
             let method = Ident::new(method, Span::call_site());
 

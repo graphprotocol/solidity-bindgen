@@ -23,8 +23,6 @@ pub struct Function {
     pub inputs: Vec<Param>,
     pub outputs: Vec<Param>,
     pub state_mutability: StateMutability,
-    // TODO: type can be omitted, defaulting to "function", likewise payable and constant can be omitted, both defaulting to false.
-    pub constant: Option<bool>,
 }
 
 #[derive(Deserialize, Debug)]
