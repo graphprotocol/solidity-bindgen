@@ -7,7 +7,6 @@ edition = "2018"
 
 [dependencies]
 solidity-bindgen-macros = { path = "../solidity-bindgen-macros" }
-web3 = "0.10.0"
-anyhow = "1.0.28"
+web3 = "0.11.0"
 futures = { version="0.3.4", features=["compat"] }
-ethabi = "9.0"
+ethabi = "12.0.0"
