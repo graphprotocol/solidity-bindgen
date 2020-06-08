@@ -25,7 +25,17 @@ pub fn abi_from_file(path: impl AsRef<Path>, span: Span) -> TokenStream {
 
     quote! {
         pub struct #struct_name {
-            contract: ::solidity_bindgen::internal::ContractWrapper,
+            contract: ::std::sync::Arc<::solidity_bindgen::internal::ContractWrapper>,
+            pub address: ::web3::types::Address,
+        }
+
+        impl ::std::clone::Clone for #struct_name {
+            fn clone(&self) -> Self {
+                Self {
+                    contract: ::std::clone::Clone::clone(&self.contract),
+                    address: self.address,
+                }
+            }
         }
 
         impl #struct_name {
@@ -35,8 +45,10 @@ pub fn abi_from_file(path: impl AsRef<Path>, span: Span) -> TokenStream {
 
                 // Set up a wrapper so we can make calls
                 let contract = ::solidity_bindgen::internal::ContractWrapper::new(address, context, abi.as_bytes())?;
+                let contract = ::std::sync::Arc::new(contract);
                 Ok(Self {
-                    contract
+                    address,
+                    contract,
                 })
             }
 
