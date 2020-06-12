@@ -7,6 +7,10 @@ edition = "2018"
 
 [dependencies]
 solidity-bindgen-macros = { path = "../solidity-bindgen-macros" }
-web3 = "0.11.0"
-futures = { version="0.3.4", features=["compat"] }
+# Can go back to the crates.io version once this is merged and published:
+# https://github.com/tomusdrw/rust-web3/pull/352
+web3 = { git = "https://github.com/That3Percent/rust-web3", branch = "custom-signing-methods" }
+futures = { version="0.3.5", features=["compat"] }
 ethabi = "12.0.0"
+secp256k1 = "0.17.2"
+zeroize = "1.1.0"

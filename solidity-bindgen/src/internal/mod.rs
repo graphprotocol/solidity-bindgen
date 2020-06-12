@@ -1,45 +1,16 @@
 use super::Context;
-use ethabi::Token;
 use futures::compat::Future01CompatExt as _;
-use web3::contract::tokens::{Detokenize, Tokenizable, Tokenize};
-use web3::contract::{self, Contract};
+use web3::contract::tokens::{Detokenize, Tokenize};
+use web3::contract::Contract;
 use web3::transports::Http;
 use web3::types::{Address, TransactionReceipt};
 use web3::Web3;
 
-pub enum Unimplemented {}
-
-impl Tokenizable for Unimplemented {
-    fn from_token(_: Token) -> Result<Self, contract::Error>
-    where
-        Self: Sized,
-    {
-        unimplemented!()
-    }
-    #[inline(always)]
-    fn into_token(self) -> Token {
-        unsafe { std::hint::unreachable_unchecked() }
-    }
-}
-
-pub struct Empty;
-impl Detokenize for Empty {
-    fn from_tokens(tokens: Vec<Token>) -> std::result::Result<Self, contract::Error>
-    where
-        Self: Sized,
-    {
-        if tokens.is_empty() {
-            Ok(Empty)
-        } else {
-            Err(contract::Error::InvalidOutputType(
-                "Expected no tokens".to_owned(),
-            ))
-        }
-    }
-}
+mod types;
+pub use types::*;
 
 /// Mostly exists to map to the new futures.
-/// This is the "untyped" API which the generated types will use
+/// This is the "untyped" API which the generated types will use.
 pub struct ContractWrapper {
     contract: Contract<Http>,
     context: Context,
@@ -83,14 +54,13 @@ impl ContractWrapper {
 
     pub async fn send(
         &self,
-        name: &'static str,
+        func: &'static str,
         params: impl Tokenize,
     ) -> Result<TransactionReceipt, web3::Error> {
         self.contract
-            .call_with_confirmations(
-                name,
+            .signed_call_with_confirmations(
+                func,
                 params,
-                self.context.from(),
                 Default::default(),
                 // Num confirmations. From a library standpoint, this should be
                 // a parameter of the function. Choosing a correct value is very
@@ -100,6 +70,7 @@ impl ContractWrapper {
                 // be available. So just picking a pretty high security margin
                 // for now.
                 24,
+                &self.context.secret_key(),
             )
             .compat()
             .await
@@ -126,6 +97,6 @@ impl ContractWrapper {
         // See also 4cd1038f-56f2-4cf2-8dbe-672da9006083
         let contract = Contract::from_json(web3.eth(), contract_address, json_abi).unwrap();
 
-        Ok(Self { context, contract })
+        Ok(Self { contract, context })
     }
 }

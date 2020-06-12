@@ -1,3 +1,5 @@
+use crate::SafeSecretKey;
+use secp256k1::key::SecretKey;
 use std::sync::Arc;
 use web3::transports::EventLoopHandle;
 use web3::types::Address;
@@ -13,12 +15,22 @@ struct ContextInner {
     url: String,
     handle: EventLoopHandle,
     from: Address,
+    secret_key: SafeSecretKey,
 }
 
 impl Context {
-    pub fn new(url: String, from: Address) -> Result<Self, web3::error::Error> {
+    pub fn new(
+        url: String,
+        from: Address,
+        secret_key: &SecretKey,
+    ) -> Result<Self, web3::error::Error> {
         let handle = EventLoopHandle::spawn(|_| Ok(()))?.0;
-        let inner = ContextInner { url, handle, from };
+        let inner = ContextInner {
+            url,
+            handle,
+            from,
+            secret_key: secret_key.into(),
+        };
         Ok(Self(Arc::new(inner)))
     }
 
@@ -32,5 +44,9 @@ impl Context {
 
     pub(crate) fn handle(&self) -> &EventLoopHandle {
         &self.0.handle
+    }
+
+    pub(crate) fn secret_key(&self) -> &SecretKey {
+        &self.0.secret_key
     }
 }
