@@ -1,5 +1,6 @@
 use crate::SafeSecretKey;
 use secp256k1::key::SecretKey;
+use std::convert::TryInto as _;
 use std::sync::Arc;
 use web3::transports::EventLoopHandle;
 use web3::types::Address;
@@ -29,7 +30,7 @@ impl Context {
             url,
             handle,
             from,
-            secret_key: secret_key.into(),
+            secret_key: secret_key.try_into().unwrap(),
         };
         Ok(Self(Arc::new(inner)))
     }
