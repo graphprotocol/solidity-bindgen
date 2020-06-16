@@ -1,10 +1,15 @@
-use crate::abi_json::{abi_from_json, Abi, StateMutability};
-use ethabi::param_type::{ParamType, Reader};
+use ethabi::param_type::ParamType;
+use ethabi::Function;
 use inflector::cases::snakecase::to_snake_case;
 use proc_macro2::{Ident, Span, TokenStream};
+use std::borrow::Borrow;
 use std::path::Path;
 
-pub fn abi_from_file(path: impl AsRef<Path>, span: Span) -> TokenStream {
+fn ident<S: Borrow<str>>(name: S) -> Ident {
+    Ident::new(name.borrow(), Span::call_site())
+}
+
+pub fn abi_from_file(path: impl AsRef<Path>) -> TokenStream {
     let name = path
         .as_ref()
         .file_stem()
@@ -13,15 +18,14 @@ pub fn abi_from_file(path: impl AsRef<Path>, span: Span) -> TokenStream {
         .unwrap()
         .to_owned();
     let bytes = std::fs::read(path).unwrap();
-    let fn_abis = abi_from_json(&bytes);
 
     // See also 4cd1038f-56f2-4cf2-8dbe-672da9006083
-    let _validated_abis = ethabi::Contract::load(&bytes[..]).expect("Could not validate ABIs");
+    let abis = ethabi::Contract::load(&bytes[..]).expect("Could not validate ABIs");
     let abi_str = String::from_utf8(bytes).expect("Abis need to be valid UTF-8");
 
-    let struct_name = Ident::new(name.as_str(), span);
+    let struct_name = ident(name);
 
-    let fns = fn_abis.iter().map(|abi| fn_from_abi(abi, span));
+    let fns = abis.functions().map(|f| fn_from_abi(f));
 
     quote! {
         pub struct #struct_name {
@@ -57,33 +61,34 @@ pub fn abi_from_file(path: impl AsRef<Path>, span: Span) -> TokenStream {
     }
 }
 
-fn param_token_type(param_type: ParamType) -> TokenStream {
-    match param_type {
+/// Convert some Ethereum ABI type to a Rust type (usually from the web3 namespace)
+fn param_type(kind: &ParamType) -> TokenStream {
+    match kind {
         ParamType::Address => quote! { ::web3::types::Address },
         ParamType::Bytes => quote! { ::std::vec::Vec<u8> },
         ParamType::Int(size) => match size {
             256 => quote! { ::solidity_bindgen::internal::Unimplemented },
             _ => {
-                let name = Ident::new(&format!("i{}", size), Span::call_site());
+                let name = ident(format!("i{}", size));
                 quote! { #name }
             }
         },
         ParamType::Uint(size) => match size {
             256 => quote! { ::web3::types::U256 },
             _ => {
-                let name = Ident::new(&format!("u{}", size), Span::call_site());
+                let name = ident(format!("u{}", size));
                 quote! { #name }
             }
         },
         ParamType::Bool => quote! { bool },
         ParamType::String => quote! { ::std::string::String },
         ParamType::Array(inner) => {
-            let inner = param_token_type(*inner);
+            let inner = param_type(inner);
             quote! { ::std::vec::Vec<#inner> }
         }
         ParamType::FixedBytes(len) => quote! { [ u8; #len ] },
         ParamType::FixedArray(inner, len) => {
-            let inner = param_token_type(*inner);
+            let inner = param_type(inner);
             quote! { [#inner; #len] }
         }
         ParamType::Tuple(members) => match members.len() {
@@ -91,16 +96,11 @@ fn param_token_type(param_type: ParamType) -> TokenStream {
                 quote! { ::solidity_bindgen::internal::Empty }
             }
             _ => {
-                let members = members.into_iter().map(|member| param_token_type(*member));
+                let members = members.into_iter().map(|member| param_type(member));
                 quote! { (#(#members,)*) }
             }
         },
     }
-}
-
-/// Convert some Ethereum ABI type to a Rust type (usually from the web3 namespace)
-fn param_type(type_name: &str) -> TokenStream {
-    param_token_type(Reader::read(type_name).unwrap())
 }
 
 pub fn to_rust_name(type_name: &str, eth_name: &str, i: usize) -> String {
@@ -111,72 +111,63 @@ pub fn to_rust_name(type_name: &str, eth_name: &str, i: usize) -> String {
     }
 }
 
-pub fn fn_from_abi(abi: &Abi, span: Span) -> TokenStream {
-    match abi {
-        Abi::Function(function) => {
-            let eth_name = &function.name;
-            let rust_name = Ident::new(&to_rust_name("function", eth_name, 0), span);
+pub fn fn_from_abi(function: &Function) -> TokenStream {
+    let eth_name = &function.name;
+    let rust_name = ident(to_rust_name("function", eth_name, 0));
 
-            // Get the types and names of parameters
-            let params_in = function.inputs.iter().enumerate().map(|(i, param)| {
-                let name = Ident::new(&to_rust_name("input", &param.name, i), span);
-                let t = param_type(&param.r#type);
-                quote! {
-                    #name: #t
-                }
-            });
+    // Get the types and names of parameters
+    let params_in = function.inputs.iter().enumerate().map(|(i, param)| {
+        let name = ident(to_rust_name("input", &param.name, i));
+        let t = param_type(&param.kind);
+        quote! {
+            #name: #t
+        }
+    });
 
-            let params = function.inputs.iter().enumerate().map(|(i, param)| {
-                let name = Ident::new(&to_rust_name("input", &param.name, i), span);
-                quote! { #name }
-            });
-            let params = if function.inputs.len() == 1 {
-                quote! { #(#params)* }
-            } else {
-                quote! { (#(#params),*) }
-            };
+    let params = function.inputs.iter().enumerate().map(|(i, param)| {
+        let name = ident(to_rust_name("input", &param.name, i));
+        quote! { #name }
+    });
+    let params = if function.inputs.len() == 1 {
+        quote! { #(#params)* }
+    } else {
+        quote! { (#(#params),*) }
+    };
 
-            let transaction = matches!(
-                function.state_mutability,
-                StateMutability::Nonpayable | StateMutability::Payable
-            );
-            let method = if transaction { "send" } else { "call" };
-            let method = Ident::new(method, Span::call_site());
+    let transaction = !function.constant;
+    let method = ident(if transaction { "send" } else { "call" });
 
-            let ok = if transaction {
-                // Despite information in the ABIs to the contrary, there aren't
-                // really outputs for web3 send fns. The outputs that are
-                // available aren't returned by these APIs, but are only made
-                // available to contracts calling each other. 🤷
-                //
-                // All you can get is a receipt. So, the way to get something
-                // like a return value would be to check for events emitted or
-                // to make further queries for data.
-                quote! { ::web3::types::TransactionReceipt }
-            } else {
-                match function.outputs.len() {
-                    0 => quote! { ::solidity_bindgen::internal::Empty },
-                    1 => {
-                        let t = param_type(&function.outputs[0].r#type);
-                        quote! { #t }
-                    }
-                    _ => {
-                        let types = function.outputs.iter().map(|o| {
-                            let t = param_type(&o.r#type);
-                            quote! { #t }
-                        });
+    let ok = if transaction {
+        // Despite information in the ABIs to the contrary, there aren't
+        // really outputs for web3 send fns. The outputs that are
+        // available aren't returned by these APIs, but are only made
+        // available to contracts calling each other. 🤷
+        //
+        // All you can get is a receipt. So, the way to get something
+        // like a return value would be to check for events emitted or
+        // to make further queries for data.
+        quote! { ::web3::types::TransactionReceipt }
+    } else {
+        match function.outputs.len() {
+            0 => quote! { ::solidity_bindgen::internal::Empty },
+            1 => {
+                let t = param_type(&function.outputs[0].kind);
+                quote! { #t }
+            }
+            _ => {
+                let types = function.outputs.iter().map(|o| {
+                    let t = param_type(&o.kind);
+                    quote! { #t }
+                });
 
-                        quote! { (#(#types),*) }
-                    }
-                }
-            };
-
-            quote! {
-                pub async fn #rust_name(&self, #(#params_in),*) -> ::std::result::Result<#ok, ::web3::Error> {
-                    self.contract.#method(#eth_name, #params).await
-                }
+                quote! { (#(#types),*) }
             }
         }
-        _ => quote! {},
+    };
+
+    quote! {
+        pub async fn #rust_name(&self, #(#params_in),*) -> ::std::result::Result<#ok, ::web3::Error> {
+            self.contract.#method(#eth_name, #params).await
+        }
     }
 }

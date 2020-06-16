@@ -1,5 +1,4 @@
 mod abi_gen;
-mod abi_json;
 
 use crate::abi_gen::abi_from_file;
 use std::env::current_dir;
@@ -21,7 +20,7 @@ pub fn contract_abi(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let metadata = metadata(&path).unwrap();
 
     let tokens = if metadata.is_file() {
-        abi_from_file(path, s.span())
+        abi_from_file(path)
     } else {
         panic!("Expected a file. To generate abis for an entire directory, use contract_abis");
     };
@@ -44,7 +43,7 @@ pub fn contract_abis(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         for entry in read_dir(path).unwrap() {
             let entry = entry.unwrap();
             if entry.metadata().unwrap().is_file() {
-                let file_abi = abi_from_file(entry.path(), s.span());
+                let file_abi = abi_from_file(entry.path());
                 abis.push(file_abi);
             }
         }
