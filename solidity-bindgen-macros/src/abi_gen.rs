@@ -1,7 +1,8 @@
 use ethabi::param_type::ParamType;
-use ethabi::Function;
+use ethabi::{Function, StateMutability};
 use inflector::cases::snakecase::to_snake_case;
 use proc_macro2::{Ident, Span, TokenStream};
+use quote::ToTokens as _;
 use std::borrow::Borrow;
 use std::path::Path;
 
@@ -62,42 +63,44 @@ pub fn abi_from_file(path: impl AsRef<Path>) -> TokenStream {
 }
 
 /// Convert some Ethereum ABI type to a Rust type (usually from the web3 namespace)
-fn param_type(kind: &ParamType) -> TokenStream {
+/// Returns the tokens for the type, as well as the level of nesting of the tuples for a hack.
+fn param_type(kind: &ParamType) -> (TokenStream, usize) {
     match kind {
-        ParamType::Address => quote! { ::web3::types::Address },
-        ParamType::Bytes => quote! { ::std::vec::Vec<u8> },
+        ParamType::Address => (quote! { ::web3::types::Address }, 0),
+        ParamType::Bytes => (quote! { ::std::vec::Vec<u8> }, 0),
         ParamType::Int(size) => match size {
-            256 => quote! { ::solidity_bindgen::internal::Unimplemented },
-            _ => {
-                let name = ident(format!("i{}", size));
-                quote! { #name }
-            }
+            256 => (quote! { ::solidity_bindgen::internal::Unimplemented }, 0),
+            _ => (ident(format!("i{}", size)).to_token_stream(), 0),
         },
         ParamType::Uint(size) => match size {
-            256 => quote! { ::web3::types::U256 },
+            256 => (quote! { ::web3::types::U256 }, 0),
             _ => {
                 let name = ident(format!("u{}", size));
-                quote! { #name }
+                (quote! { #name }, 0)
             }
         },
-        ParamType::Bool => quote! { bool },
-        ParamType::String => quote! { ::std::string::String },
+        ParamType::Bool => (quote! { bool }, 0),
+        ParamType::String => (quote! { ::std::string::String }, 0),
         ParamType::Array(inner) => {
-            let inner = param_type(inner);
-            quote! { ::std::vec::Vec<#inner> }
+            let (inner, nesting) = param_type(inner);
+            (quote! { ::std::vec::Vec<#inner> }, nesting)
         }
-        ParamType::FixedBytes(len) => quote! { [ u8; #len ] },
+        ParamType::FixedBytes(len) => (quote! { [ u8; #len ] }, 0),
         ParamType::FixedArray(inner, len) => {
-            let inner = param_type(inner);
-            quote! { [#inner; #len] }
+            let (inner, nesting) = param_type(inner);
+            (quote! { [#inner; #len] }, nesting)
         }
         ParamType::Tuple(members) => match members.len() {
-            0 => {
-                quote! { ::solidity_bindgen::internal::Empty }
-            }
+            0 => (quote! { ::solidity_bindgen::internal::Empty }, 1),
             _ => {
-                let members = members.into_iter().map(|member| param_type(member));
-                quote! { (#(#members,)*) }
+                let members: Vec<_> = members
+                    .into_iter()
+                    .map(|member| param_type(member))
+                    .collect();
+                // Unwrap is ok because in this branch there must be at least 1 item.
+                let nesting = 1 + members.iter().map(|(_, n)| *n).max().unwrap();
+                let types = members.iter().map(|(ty, _)| ty);
+                (quote! { (#(#types,)*) }, nesting)
             }
         },
     }
@@ -116,25 +119,46 @@ pub fn fn_from_abi(function: &Function) -> TokenStream {
     let rust_name = ident(to_rust_name("function", eth_name, 0));
 
     // Get the types and names of parameters
+    let params_nesting = if function.inputs.len() > 1 { 1 } else { 0 };
     let params_in = function.inputs.iter().enumerate().map(|(i, param)| {
         let name = ident(to_rust_name("input", &param.name, i));
-        let t = param_type(&param.kind);
-        quote! {
-            #name: #t
+        let (t, nesting) = param_type(&param.kind);
+
+        // We have to have a branch here because Tokenize isn't implemented for
+        // nested tuples. This is because the impls of Tokenize for (A, B, ..)
+        // require the members to implement Tokenizable instead of Tokenize.
+        // Even if this did compile, it doesn't seem ethabi is architected in a
+        // way to deal with this properly considering the separation between
+        // dynamic and static types, and there are some issues like this one:
+        // https://github.com/openethereum/ethabi/issues/178
+        // Changing this type to Unimplemented always reduces the amount of
+        // nesting to 1 or 0 which compiles.
+        if nesting + params_nesting > 1 {
+            quote! {
+                #name: ::solidity_bindgen::internal::Unimplemented
+            }
+        } else {
+            quote! {
+                #name: #t
+            }
         }
     });
 
-    let params = function.inputs.iter().enumerate().map(|(i, param)| {
-        let name = ident(to_rust_name("input", &param.name, i));
-        quote! { #name }
-    });
+    let params = function
+        .inputs
+        .iter()
+        .enumerate()
+        .map(|(i, param)| ident(to_rust_name("input", &param.name, i)).into_token_stream());
     let params = if function.inputs.len() == 1 {
         quote! { #(#params)* }
     } else {
         quote! { (#(#params),*) }
     };
 
-    let transaction = !function.constant;
+    let transaction = matches!(
+        function.state_mutability,
+        StateMutability::Payable | StateMutability::NonPayable
+    );
     let method = ident(if transaction { "send" } else { "call" });
 
     let ok = if transaction {
@@ -151,13 +175,25 @@ pub fn fn_from_abi(function: &Function) -> TokenStream {
         match function.outputs.len() {
             0 => quote! { ::solidity_bindgen::internal::Empty },
             1 => {
-                let t = param_type(&function.outputs[0].kind);
-                quote! { #t }
+                let (t, nesting) = param_type(&function.outputs[0].kind);
+                if nesting < 2 {
+                    t
+                } else {
+                    quote! {
+                        ::solidity_bindgen::internal::Unimplemented
+                    }
+                }
             }
             _ => {
                 let types = function.outputs.iter().map(|o| {
-                    let t = param_type(&o.kind);
-                    quote! { #t }
+                    let (t, nesting) = param_type(&o.kind);
+                    if nesting != 0 {
+                        quote! {
+                            ::solidity_bindgen::internal::Unimplemented
+                        }
+                    } else {
+                        t
+                    }
                 });
 
                 quote! { (#(#types),*) }

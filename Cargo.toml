@@ -4,3 +4,8 @@ members = [
     "solidity-bindgen",
     "solidity-bindgen-macros",
 ]
+
+[patch.crates-io]
+ethabi = { git = "https://github.com/graphprotocol/ethabi" }
+#ethabi = { path = "../ethabi/ethabi" }
+web3 = { git = "https://github.com/That3Percent/rust-web3", branch = "custom-signing-methods" }
