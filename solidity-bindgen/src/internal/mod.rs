@@ -1,10 +1,9 @@
 use super::Context;
-use futures::compat::Future01CompatExt as _;
+use std::marker::Unpin;
 use web3::contract::tokens::{Detokenize, Tokenize};
 use web3::contract::Contract;
 use web3::transports::Http;
 use web3::types::{Address, TransactionReceipt};
-use web3::Web3;
 
 mod types;
 pub use types::*;
@@ -17,7 +16,7 @@ pub struct ContractWrapper {
 }
 
 impl ContractWrapper {
-    pub async fn call<T: Detokenize>(
+    pub async fn call<T: Detokenize + Unpin>(
         &self,
         name: &'static str,
         params: impl Tokenize,
@@ -31,7 +30,6 @@ impl ContractWrapper {
                 Default::default(),
                 None,
             )
-            .compat()
             .await
         {
             Ok(v) => Ok(v),
@@ -72,7 +70,6 @@ impl ContractWrapper {
                 24,
                 &self.context.secret_key(),
             )
-            .compat()
             .await
     }
 
@@ -82,20 +79,10 @@ impl ContractWrapper {
         json_abi: &[u8],
     ) -> Result<Self, web3::error::Error> {
         let context = context.clone();
-        // We are not expecting to interact with the chain frequently,
-        // and the websocket transport has problems with ping.
-        // So, the Http transport seems like the best choice.
-        let handle = context
-            .handle()
-            .remote()
-            .handle()
-            .expect("Handle for event loop should be alive");
-        let transport = Http::with_event_loop(context.url(), &handle, 64)?;
-        let web3 = Web3::new(transport);
 
         // All of the ABIs are verified at compile time, so we can just unwrap here.
         // See also 4cd1038f-56f2-4cf2-8dbe-672da9006083
-        let contract = Contract::from_json(web3.eth(), contract_address, json_abi).unwrap();
+        let contract = Contract::from_json(context.eth(), contract_address, json_abi).unwrap();
 
         Ok(Self { contract, context })
     }
