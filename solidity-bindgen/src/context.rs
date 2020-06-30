@@ -2,52 +2,50 @@ use crate::SafeSecretKey;
 use secp256k1::key::SecretKey;
 use std::convert::TryInto as _;
 use std::sync::Arc;
-use web3::transports::EventLoopHandle;
+use web3::api::Eth;
+use web3::transports::Http;
 use web3::types::Address;
+use web3::Web3;
 
-/// A type needed to instantiate contracts. All contracts instantiated with the
-/// same Context will share the same EventLoopHandle. As long as the contracts
-/// are not dropped, the EventLoopHandle will not be dropped either. This type
-/// is cheap to clone.
+/// Common data associated with multiple contracts.
 #[derive(Clone)]
 pub struct Context(Arc<ContextInner>);
 
 struct ContextInner {
-    url: String,
-    handle: EventLoopHandle,
     from: Address,
     secret_key: SafeSecretKey,
+    // We are not expecting to interact with the chain frequently,
+    // and the websocket transport has problems with ping.
+    // So, the Http transport seems like the best choice.
+    eth: Eth<Http>,
 }
 
 impl Context {
     pub fn new(
-        url: String,
+        url: &str,
         from: Address,
         secret_key: &SecretKey,
     ) -> Result<Self, web3::error::Error> {
-        let handle = EventLoopHandle::spawn(|_| Ok(()))?.0;
+        let transport = Http::new(url)?;
+        let web3 = Web3::new(transport);
+        let eth = web3.eth();
         let inner = ContextInner {
-            url,
-            handle,
+            eth,
             from,
             secret_key: secret_key.try_into().unwrap(),
         };
         Ok(Self(Arc::new(inner)))
     }
 
-    pub fn url(&self) -> &str {
-        &self.0.url
-    }
-
     pub fn from(&self) -> Address {
         self.0.from
     }
 
-    pub(crate) fn handle(&self) -> &EventLoopHandle {
-        &self.0.handle
-    }
-
     pub(crate) fn secret_key(&self) -> &SecretKey {
         &self.0.secret_key
+    }
+
+    pub(crate) fn eth(&self) -> Eth<Http> {
+        self.0.eth.clone()
     }
 }
