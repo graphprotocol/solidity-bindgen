@@ -68,7 +68,7 @@ impl ContractWrapper {
                 // be available. So just picking a pretty high security margin
                 // for now.
                 24,
-                &self.context.secret_key(),
+                self.context.secret_key(),
             )
             .await
     }
