@@ -45,7 +45,7 @@ impl ContractWrapper {
                 // they have the same error type. It is the opinion of this
                 // library that ABI sorts of errors are irrecoverable and should
                 // panic anyway.
-                _ => panic!("The ABI is out of date"),
+                e => panic!("The ABI is out of date. Name: {}. Inner: {}", name, e),
             },
         }
     }
