@@ -2,6 +2,7 @@ use super::Context;
 use std::marker::Unpin;
 use web3::contract::tokens::{Detokenize, Tokenize};
 use web3::contract::Contract;
+use web3::contract::Options;
 use web3::transports::Http;
 use web3::types::{Address, TransactionReceipt};
 
@@ -55,19 +56,43 @@ impl ContractWrapper {
         func: &'static str,
         params: impl Tokenize,
     ) -> Result<TransactionReceipt, web3::Error> {
+        self.send_with_options(func, params, Default::default())
+            .await
+    }
+
+    pub async fn send_with_options(
+        &self,
+        func: &'static str,
+        params: impl Tokenize,
+        options: Options,
+    ) -> Result<TransactionReceipt, web3::Error> {
+        self.send_with_confirmations(
+            func, params, options,
+            // Num confirmations. From a library standpoint, this should be
+            // a parameter of the function. Choosing a correct value is very
+            // difficult, even for a consumer of the library as it would
+            // require assessing the value of the transaction, security
+            // margins, and a number of other factors for which data may not
+            // be available. So just picking a pretty high security margin
+            // for now.
+            24,
+        )
+        .await
+    }
+
+    pub async fn send_with_confirmations(
+        &self,
+        func: &'static str,
+        params: impl Tokenize,
+        options: Options,
+        confirmations: usize,
+    ) -> Result<TransactionReceipt, web3::Error> {
         self.contract
             .signed_call_with_confirmations(
                 func,
                 params,
-                Default::default(),
-                // Num confirmations. From a library standpoint, this should be
-                // a parameter of the function. Choosing a correct value is very
-                // difficult, even for a consumer of the library as it would
-                // require assessing the value of the transaction, security
-                // margins, and a number of other factors for which data may not
-                // be available. So just picking a pretty high security margin
-                // for now.
-                24,
+                options,
+                confirmations,
                 self.context.secret_key(),
             )
             .await

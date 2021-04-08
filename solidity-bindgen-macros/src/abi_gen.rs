@@ -57,6 +57,16 @@ pub fn abi_from_file(path: impl AsRef<Path>) -> TokenStream {
                 })
             }
 
+            pub async fn send_with_confirmations(
+                &self,
+                func: &'static str,
+                params: impl web3::contract::tokens::Tokenize,
+                options: ::web3::contract::Options,
+                confirmations: usize,
+            ) -> Result<::web3::types::TransactionReceipt, ::web3::Error> {
+                self.contract.send_with_confirmations(func, params, options, confirmations).await
+            }
+
             #(#fns)*
         }
     }
