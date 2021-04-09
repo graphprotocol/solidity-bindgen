@@ -2,6 +2,7 @@ use super::Context;
 use std::marker::Unpin;
 use web3::contract::tokens::{Detokenize, Tokenize};
 use web3::contract::Contract;
+use web3::contract::Options;
 use web3::transports::Http;
 use web3::types::{Address, TransactionReceipt};
 
@@ -54,20 +55,28 @@ impl ContractWrapper {
         &self,
         func: &'static str,
         params: impl Tokenize,
+        options: Option<Options>,
+        confirmations: Option<usize>,
     ) -> Result<TransactionReceipt, web3::Error> {
         self.contract
             .signed_call_with_confirmations(
                 func,
                 params,
-                Default::default(),
-                // Num confirmations. From a library standpoint, this should be
-                // a parameter of the function. Choosing a correct value is very
-                // difficult, even for a consumer of the library as it would
-                // require assessing the value of the transaction, security
-                // margins, and a number of other factors for which data may not
-                // be available. So just picking a pretty high security margin
-                // for now.
-                24,
+                match options {
+                    None => Default::default(),
+                    Some(options) => options,
+                },
+                match confirmations {
+                    // Num confirmations. From a library standpoint, this should be
+                    // a parameter of the function. Choosing a correct value is very
+                    // difficult, even for a consumer of the library as it would
+                    // require assessing the value of the transaction, security
+                    // margins, and a number of other factors for which data may not
+                    // be available. So just picking a pretty high security margin
+                    // for now.
+                    None => 24,
+                    Some(confirmations) => confirmations,
+                },
                 self.context.secret_key(),
             )
             .await

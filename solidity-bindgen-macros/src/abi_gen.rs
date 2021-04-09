@@ -57,6 +57,16 @@ pub fn abi_from_file(path: impl AsRef<Path>) -> TokenStream {
                 })
             }
 
+            pub async fn send(
+                &self,
+                func: &'static str,
+                params: impl web3::contract::tokens::Tokenize,
+                options: Option<::web3::contract::Options>,
+                confirmations: Option<usize>,
+            ) -> Result<::web3::types::TransactionReceipt, ::web3::Error> {
+                self.contract.send(func, params, options, confirmations).await
+            }
+
             #(#fns)*
         }
     }
@@ -201,9 +211,15 @@ pub fn fn_from_abi(function: &Function) -> TokenStream {
         }
     };
 
+    let fn_call = if method == "send" {
+        quote! { self.contract.#method(#eth_name, #params, None, None).await }
+    } else {
+        quote! { self.contract.#method(#eth_name, #params).await }
+    };
+
     quote! {
         pub async fn #rust_name(&self, #(#params_in),*) -> ::std::result::Result<#ok, ::web3::Error> {
-            self.contract.#method(#eth_name, #params).await
+            #fn_call
         }
     }
 }
