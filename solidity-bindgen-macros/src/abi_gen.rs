@@ -10,6 +10,19 @@ fn ident<S: Borrow<str>>(name: S) -> Ident {
     Ident::new(name.borrow(), Span::call_site())
 }
 
+#[derive(Eq, PartialEq)]
+enum Method {
+    Send,
+    Call,
+}
+
+fn method(f: &Function) -> Method {
+    match f.state_mutability {
+        StateMutability::Payable | StateMutability::NonPayable => Method::Send,
+        StateMutability::Pure | StateMutability::View => Method::Call,
+    }
+}
+
 pub fn abi_from_file(path: impl AsRef<Path>) -> TokenStream {
     let name = path
         .as_ref()
@@ -26,48 +39,71 @@ pub fn abi_from_file(path: impl AsRef<Path>) -> TokenStream {
 
     let struct_name = ident(name);
 
-    let fns = abis.functions().map(|f| fn_from_abi(f));
+    let mut send_fns = Vec::new();
+    let mut call_fns = Vec::new();
+
+    for f in abis.functions() {
+        let dest = match method(f) {
+            Method::Call => &mut call_fns,
+            Method::Send => &mut send_fns,
+        };
+
+        let f = fn_from_abi(f);
+        dest.push(f);
+    }
 
     quote! {
-        pub struct #struct_name {
-            contract: ::std::sync::Arc<::solidity_bindgen::internal::ContractWrapper>,
+        // "hygenic" ident for generic
+        pub struct #struct_name<SolidityBindgenProvider> {
+            provider: ::std::sync::Arc<SolidityBindgenProvider>,
             pub address: ::web3::types::Address,
         }
 
-        impl ::std::clone::Clone for #struct_name {
+        impl<SolidityBindgenProvider> ::std::clone::Clone for #struct_name<SolidityBindgenProvider> {
             fn clone(&self) -> Self {
                 Self {
-                    contract: ::std::clone::Clone::clone(&self.contract),
+                    provider: ::std::clone::Clone::clone(&self.provider),
                     address: self.address,
                 }
             }
         }
 
-        impl #struct_name {
-            pub fn new(address: ::web3::types::Address, context: &::solidity_bindgen::Context) -> ::std::result::Result<Self, ::web3::Error> {
+        impl<SolidityBindgenProvider> #struct_name<SolidityBindgenProvider> {
+            pub fn new<Context>(address: ::web3::types::Address, context: &Context) -> Self where Context: ::solidity_bindgen::Context<Provider = SolidityBindgenProvider> {
                 // Embed ABI into the program
                 let abi = #abi_str;
 
                 // Set up a wrapper so we can make calls
-                let contract = ::solidity_bindgen::internal::ContractWrapper::new(address, context, abi.as_bytes())?;
-                let contract = ::std::sync::Arc::new(contract);
-                Ok(Self {
+                let provider = ::solidity_bindgen::Context::provider(context, address, abi.as_bytes());
+                let provider = ::std::sync::Arc::new(provider);
+                Self {
                     address,
-                    contract,
-                })
+                    provider,
+                }
             }
+        }
 
+        impl<SolidityBindgenProvider> #struct_name<SolidityBindgenProvider> where SolidityBindgenProvider: ::solidity_bindgen::SendProvider {
+
+            // TODO: This API is not in the spirit of this library
+            // (validating params & func at compile time). It may be better
+            // to add options to all functions.
             pub async fn send(
                 &self,
                 func: &'static str,
-                params: impl web3::contract::tokens::Tokenize,
+                params: impl web3::contract::tokens::Tokenize + Send,
                 options: Option<::web3::contract::Options>,
                 confirmations: Option<usize>,
-            ) -> Result<::web3::types::TransactionReceipt, ::web3::Error> {
-                self.contract.send(func, params, options, confirmations).await
+            ) -> Result<SolidityBindgenProvider::Out, ::web3::Error> {
+                self.provider.send(func, params, options, confirmations).await
             }
 
-            #(#fns)*
+            #(#send_fns)*
+        }
+
+        impl<SolidityBindgenProvider> #struct_name<SolidityBindgenProvider>
+            where SolidityBindgenProvider: ::solidity_bindgen::CallProvider {
+                #(#call_fns)*
         }
     }
 }
@@ -93,7 +129,11 @@ fn param_type(kind: &ParamType) -> (TokenStream, usize) {
         ParamType::String => (quote! { ::std::string::String }, 0),
         ParamType::Array(inner) => {
             let (inner, nesting) = param_type(inner);
-            (quote! { ::std::vec::Vec<#inner> }, nesting)
+            if nesting > 0 {
+                (quote! { ::solidity_bindgen::internal::Unimplemented }, 0)
+            } else {
+                (quote! { ::std::vec::Vec<#inner> }, nesting)
+            }
         }
         ParamType::FixedBytes(len) => (quote! { [ u8; #len ] }, 0),
         ParamType::FixedArray(inner, len) => {
@@ -165,13 +205,9 @@ pub fn fn_from_abi(function: &Function) -> TokenStream {
         quote! { (#(#params),*) }
     };
 
-    let transaction = matches!(
-        function.state_mutability,
-        StateMutability::Payable | StateMutability::NonPayable
-    );
-    let method = ident(if transaction { "send" } else { "call" });
+    let method = method(function);
 
-    let ok = if transaction {
+    let ok = if method == Method::Send {
         // Despite information in the ABIs to the contrary, there aren't
         // really outputs for web3 send fns. The outputs that are
         // available aren't returned by these APIs, but are only made
@@ -180,7 +216,7 @@ pub fn fn_from_abi(function: &Function) -> TokenStream {
         // All you can get is a receipt. So, the way to get something
         // like a return value would be to check for events emitted or
         // to make further queries for data.
-        quote! { ::web3::types::TransactionReceipt }
+        quote! { SolidityBindgenProvider::Out }
     } else {
         match function.outputs.len() {
             0 => quote! { ::solidity_bindgen::internal::Empty },
@@ -211,10 +247,9 @@ pub fn fn_from_abi(function: &Function) -> TokenStream {
         }
     };
 
-    let fn_call = if method == "send" {
-        quote! { self.contract.#method(#eth_name, #params, None, None).await }
-    } else {
-        quote! { self.contract.#method(#eth_name, #params).await }
+    let fn_call = match method {
+        Method::Call => quote! { self.provider.call(#eth_name, #params).await },
+        Method::Send => quote! { self.provider.send(#eth_name, #params, None, None).await },
     };
 
     quote! {
