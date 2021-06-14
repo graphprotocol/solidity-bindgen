@@ -1,4 +1,6 @@
-use super::Context;
+use crate::context::Web3Context;
+use crate::providers::{CallProvider, SendProvider};
+use async_trait::async_trait;
 use std::marker::Unpin;
 use web3::contract::tokens::{Detokenize, Tokenize};
 use web3::contract::Contract;
@@ -6,22 +8,20 @@ use web3::contract::Options;
 use web3::transports::Http;
 use web3::types::{Address, TransactionReceipt};
 
-mod types;
-pub use types::*;
-
 /// Mostly exists to map to the new futures.
 /// This is the "untyped" API which the generated types will use.
-pub struct ContractWrapper {
+pub struct Web3Provider {
     contract: Contract<Http>,
-    context: Context,
+    context: Web3Context,
 }
 
-impl ContractWrapper {
-    pub async fn call<T: Detokenize + Unpin>(
+#[async_trait]
+impl CallProvider for Web3Provider {
+    async fn call<O: Detokenize + Unpin + Send, Params: Tokenize + Send>(
         &self,
         name: &'static str,
-        params: impl Tokenize,
-    ) -> Result<T, web3::Error> {
+        params: Params,
+    ) -> Result<O, web3::Error> {
         match self
             .contract
             .query(
@@ -50,14 +50,18 @@ impl ContractWrapper {
             },
         }
     }
+}
 
-    pub async fn send(
+#[async_trait]
+impl SendProvider for Web3Provider {
+    type Out = TransactionReceipt;
+    async fn send<Params: Tokenize + Send>(
         &self,
         func: &'static str,
-        params: impl Tokenize,
+        params: Params,
         options: Option<Options>,
         confirmations: Option<usize>,
-    ) -> Result<TransactionReceipt, web3::Error> {
+    ) -> Result<Self::Out, web3::Error> {
         self.contract
             .signed_call_with_confirmations(
                 func,
@@ -81,18 +85,16 @@ impl ContractWrapper {
             )
             .await
     }
+}
 
-    pub fn new(
-        contract_address: Address,
-        context: &Context,
-        json_abi: &[u8],
-    ) -> Result<Self, web3::error::Error> {
+impl Web3Provider {
+    pub fn new(contract_address: Address, context: &Web3Context, json_abi: &[u8]) -> Self {
         let context = context.clone();
 
         // All of the ABIs are verified at compile time, so we can just unwrap here.
         // See also 4cd1038f-56f2-4cf2-8dbe-672da9006083
         let contract = Contract::from_json(context.eth(), contract_address, json_abi).unwrap();
 
-        Ok(Self { contract, context })
+        Self { contract, context }
     }
 }
