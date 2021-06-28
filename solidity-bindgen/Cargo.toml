@@ -3,14 +3,19 @@ name = "solidity-bindgen"
 version = "0.1.0"
 authors = ["Zac Burns <That3Percent@gmail.com>"]
 edition = "2018"
+license = "MIT"
+description = "Generates bindings for solidity contracts. Uses web3 under the hood."
+categories = ["cryptography::cryptocurrencies", "development-tools::ffi"]
 
+[badges]
+maintenance = { status = "experimental" }
 
 [dependencies]
-solidity-bindgen-macros = { path = "../solidity-bindgen-macros" }
-web3 = "0.13.0"
+solidity-bindgen-macros = { version="0.1.0", path = "../solidity-bindgen-macros" }
+web3 = "0.16.0"
 futures = "0.3.5"
-ethabi = "12.0.0"
-secp256k1 = "0.17.2"
+ethabi = "14.0.0"
+secp256k1 = "0.20.3"
 zeroize = "1.1.0"
 sodiumoxide = "0.2.5"
 async-trait = "0.1.50"

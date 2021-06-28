@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Zac Burns <That3Percent@gmail.com>"]
 edition = "2018"
 license = "MIT"
+description = "A proc macro crate internal to solidity-bindgen"
 
 [badges]
 maintenance = { status = "experimental" }
@@ -12,7 +13,7 @@ maintenance = { status = "experimental" }
 proc-macro = true
 
 [dependencies]
-ethabi = "12.0.0"
+ethabi = "14.0.0"
 syn = "1.0.18"
 quote = "1.0.3"
 proc-macro2 = "1.0.10"
